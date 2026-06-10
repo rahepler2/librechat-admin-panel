@@ -87,6 +87,8 @@ export interface ConfigTabContentProps {
   isEditingScope?: boolean;
   /** YAML-defined entry keys per section, keyed by parent path. */
   baseRecordKeys?: Record<string, Set<string>>;
+  /** YAML-defined entry values per section, keyed by parent path. */
+  baseRecordValues?: Record<string, Record<string, ConfigValue>>;
   onValidationError?: (message: string) => void;
 }
 
@@ -232,6 +234,8 @@ export interface FieldRendererProps {
   alwaysShowLabels?: boolean;
   /** YAML-defined entry keys for the section being rendered. */
   yamlBaseKeys?: Set<string>;
+  /** YAML-defined entry values for the section being rendered, revealed when a DB override is cleared. */
+  yamlBaseValues?: Record<string, ConfigValue>;
   onValidationError?: (message: string) => void;
 }
 

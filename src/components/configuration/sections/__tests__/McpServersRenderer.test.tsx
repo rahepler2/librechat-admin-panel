@@ -173,6 +173,7 @@ function renderRenderer({
   editedValues = {},
   dbOverridePaths,
   yamlBaseKeys,
+  yamlBaseValues,
   isEditingScope,
   onChange = vi.fn(),
   onValidationError = vi.fn(),
@@ -181,6 +182,7 @@ function renderRenderer({
   editedValues?: t.FlatConfigMap;
   dbOverridePaths?: Set<string>;
   yamlBaseKeys?: Set<string>;
+  yamlBaseValues?: Record<string, t.ConfigValue>;
   isEditingScope?: boolean;
   onChange?: (path: string, value: t.ConfigValue) => void;
   onValidationError?: (message: string) => void;
@@ -199,6 +201,7 @@ function renderRenderer({
     editedValues,
     dbOverridePaths,
     yamlBaseKeys,
+    yamlBaseValues,
     isEditingScope,
     onValidationError,
   };
@@ -269,9 +272,13 @@ describe('McpServersRenderer — YAML source detection', () => {
     const cmd = container.querySelector('input#yamlOne-command') as HTMLInputElement | null;
     expect(cmd).not.toBeNull();
     expect(cmd!.hasAttribute('disabled')).toBe(false);
+    expect(container.querySelector('button[aria-label^="com_ui_delete"]')).toBeNull();
+    expect(
+      container.querySelector('button[aria-label^="com_config_mcp_clear_overrides"]'),
+    ).toBeNull();
   });
 
-  it('locks identity (rename/delete) on a YAML-defined server but leaves url editable', () => {
+  it('locks rename on a YAML-defined server with overrides but offers clear-overrides instead of delete', () => {
     const baseRecord = {
       kapa: { type: 'sse', url: 'https://example.com', title: 'Edited title' },
     };
@@ -286,7 +293,52 @@ describe('McpServersRenderer — YAML source detection', () => {
     expect(url).not.toBeNull();
     expect(url!.hasAttribute('disabled')).toBe(false);
     expect(container.querySelector('button[aria-label^="com_ui_delete"]')).toBeNull();
+    expect(
+      container.querySelector('button[aria-label^="com_config_mcp_clear_overrides"]'),
+    ).not.toBeNull();
     expect(container.querySelector('button[aria-label^="com_a11y_rename_entry"]')).toBeNull();
+  });
+
+  it('clears overrides for a YAML-defined server by resetting its entry path', () => {
+    const onChange = vi.fn();
+    const baseRecord = {
+      kapa: { type: 'sse', url: 'https://example.com', title: 'Edited title' },
+    };
+    const { container } = renderRenderer({
+      baseRecord,
+      yamlBaseKeys: new Set(['kapa']),
+      dbOverridePaths: new Set(['mcpServers.kapa.title']),
+      onChange,
+    });
+
+    const clearButton = container.querySelector(
+      'button[aria-label^="com_config_mcp_clear_overrides"]',
+    ) as HTMLButtonElement | null;
+    expect(clearButton).not.toBeNull();
+    fireEvent.click(clearButton!);
+
+    expect(onChange.mock.calls).toContainEqual(['mcpServers.kapa', undefined]);
+  });
+
+  it('keeps a YAML-defined server visible with YAML values after its overrides are cleared', () => {
+    const baseRecord = {
+      kapa: { type: 'sse', url: 'https://example.com', title: 'Edited title' },
+    };
+    const { container } = renderRenderer({
+      baseRecord,
+      editedValues: { 'mcpServers.kapa': undefined },
+      yamlBaseKeys: new Set(['kapa']),
+      yamlBaseValues: {
+        kapa: { type: 'sse', url: 'https://example.com', title: 'YAML title' },
+      },
+      dbOverridePaths: new Set(['mcpServers.kapa.title']),
+    });
+
+    fireEvent.click(screen.getByText('kapa'));
+    fireEvent.click(screen.getByText('com_config_group_server_options'));
+    const title = container.querySelector('input#kapa-title') as HTMLInputElement | null;
+    expect(title).not.toBeNull();
+    expect(title!.value).toBe('YAML title');
   });
 
   it('allows scoped identity actions on a YAML-defined server', () => {

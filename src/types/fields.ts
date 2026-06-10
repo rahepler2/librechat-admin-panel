@@ -142,6 +142,8 @@ export interface ObjectEntryCardProps {
   onValueChange: (value: ConfigValue) => void;
   onRemove?: () => void;
   onRename?: (newKey: string) => void;
+  /** Accessible label for the remove button; defaults to a delete label. */
+  removeLabel?: string;
   disabled?: boolean;
   defaultExpanded?: boolean;
   renderFields: CollectionRenderFields;

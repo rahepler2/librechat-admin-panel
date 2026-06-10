@@ -14,6 +14,7 @@ export function ObjectEntryCard({
   onValueChange,
   onRemove,
   onRename,
+  removeLabel,
   disabled,
   defaultExpanded = false,
   renderFields,
@@ -198,7 +199,7 @@ export function ObjectEntryCard({
           >
             <TrashButton
               onClick={onRemove}
-              ariaLabel={`${localize('com_ui_delete')} ${entryKey}`}
+              ariaLabel={removeLabel ?? `${localize('com_ui_delete')} ${entryKey}`}
             />
           </span>
         )}

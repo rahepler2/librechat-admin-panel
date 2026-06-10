@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { MultiAccordion } from '@clickhouse/click-ui';
+import { Button, MultiAccordion } from '@clickhouse/click-ui';
 import type * as t from '@/types';
 import { SECTION_RENDERERS, SELF_CONTAINED_SECTION_RENDERERS } from './sections';
 import { FieldRenderer, SingleFieldRenderer } from './FieldRenderer';
@@ -17,6 +17,50 @@ const RECORD_ENTRY_COUNT_SECTIONS = new Set(['mcpServers']);
 
 function isSimpleScalar(f: t.SchemaField): boolean {
   return !f.children?.length && !f.isArray && f.type !== 'record' && f.type !== 'object';
+}
+
+/**
+ * The `endpoints` schema section renders as two visible sections (custom
+ * endpoints vs. named providers), so their override sweeps must stay disjoint.
+ * Maps section id to a predicate over the key directly below the data key.
+ */
+const SECTION_OVERRIDE_FILTERS = new Map<string, (subKey: string) => boolean>([
+  ['endpoints', (subKey) => subKey === 'custom'],
+  ['endpointsProviders', (subKey) => subKey !== 'custom'],
+]);
+
+/**
+ * Collects the DB override paths under a section, deduplicated to the
+ * top-level keys directly below the section. Resetting at that depth lets the
+ * backend $unset whole override subtrees in one call per key, so no empty
+ * parent objects linger as phantom entries.
+ */
+export function collectSectionOverrides(
+  sectionId: string,
+  dataKey: string,
+  dbOverridePaths?: Set<string>,
+): { count: number; resetPaths: string[] } {
+  if (!dbOverridePaths || dbOverridePaths.size === 0) return { count: 0, resetPaths: [] };
+  const subKeyFilter = SECTION_OVERRIDE_FILTERS.get(sectionId);
+  const prefix = `${dataKey}.`;
+  const targets = new Set<string>();
+  let count = 0;
+  for (const path of dbOverridePaths) {
+    if (path === dataKey) {
+      if (subKeyFilter) continue;
+      targets.add(dataKey);
+      count++;
+      continue;
+    }
+    if (!path.startsWith(prefix)) continue;
+    const nextDot = path.indexOf('.', prefix.length);
+    const subKey =
+      nextDot === -1 ? path.slice(prefix.length) : path.slice(prefix.length, nextDot);
+    if (subKeyFilter && !subKeyFilter(subKey)) continue;
+    targets.add(`${prefix}${subKey}`);
+    count++;
+  }
+  return { count, resetPaths: [...targets] };
 }
 
 function countLeafFields(fields: t.SchemaField[], parentPath: string): string[] {
@@ -56,6 +100,7 @@ export function ConfigTabContent({
   showConfiguredOnly,
   isEditingScope,
   baseRecordKeys,
+  baseRecordValues,
   onValidationError,
 }: t.ConfigTabContentProps) {
   const localize = useLocalize();
@@ -185,13 +230,41 @@ export function ConfigTabContent({
       showConfiguredOnly,
       isEditingScope,
       yamlBaseKeys: baseRecordKeys?.[dataKey],
+      yamlBaseValues: baseRecordValues?.[dataKey],
       onValidationError,
     };
+    /** Section-wide "clear overrides" only applies in base mode; in scope mode the dbOverridePaths prop carries scope-changed paths whose removal goes through the profile flow instead. */
+    const sectionOverrides =
+      !isEditingScope && !sectionDisabled
+        ? collectSectionOverrides(section.id, dataKey, dbOverridePaths)
+        : { count: 0, resetPaths: [] };
+    const allOverridesStaged =
+      sectionOverrides.resetPaths.length > 0 &&
+      sectionOverrides.resetPaths.every((p) => pendingResets?.has(p) ?? false);
     return (
       <>
         {section.bannerText && (
           <div className="mb-4">
             <InfoBanner text={section.bannerText} />
+          </div>
+        )}
+        {sectionOverrides.count > 0 && (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-(--cui-color-stroke-default) px-3 py-2">
+            <span className="text-xs text-(--cui-color-text-muted)">
+              {localize('com_config_section_overrides', { count: sectionOverrides.count })}
+            </span>
+            <Button
+              type="secondary"
+              label={localize(
+                allOverridesStaged ? 'com_config_overrides_staged' : 'com_config_clear_overrides',
+              )}
+              disabled={allOverridesStaged}
+              onClick={() => {
+                for (const path of sectionOverrides.resetPaths) {
+                  onFieldChange(path, undefined);
+                }
+              }}
+            />
           </div>
         )}
         {section.fields.length > 0 &&

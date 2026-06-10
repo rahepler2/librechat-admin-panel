@@ -141,6 +141,15 @@ export function ConfigPage({ initialTab, highlightField, initialScope }: t.Confi
     return result;
   }, [baseConfigData]);
 
+  const baseRecordValues = useMemo(() => {
+    const result: Record<string, Record<string, t.ConfigValue>> = {};
+    const yamlMcpServers = baseConfigData?.yamlMcpServers;
+    if (yamlMcpServers) {
+      result.mcpServers = yamlMcpServers;
+    }
+    return result;
+  }, [baseConfigData]);
+
   const hasUnmappedSections = useMemo(
     () =>
       schemaTree.some(
@@ -954,6 +963,7 @@ export function ConfigPage({ initialTab, highlightField, initialScope }: t.Confi
               showConfiguredOnly={showConfiguredOnly}
               isEditingScope={isEditingScope}
               baseRecordKeys={baseRecordKeys}
+              baseRecordValues={baseRecordValues}
               onValidationError={(message) => showToast({ type: 'error', message }, 5000)}
             />
           </div>

@@ -657,6 +657,8 @@ export function McpServersRenderer(props: t.FieldRendererProps) {
     disabled,
     editedValues,
     yamlBaseKeys,
+    yamlBaseValues,
+    dbOverridePaths,
     isEditingScope,
     onValidationError,
   } = props;
@@ -688,7 +690,7 @@ export function McpServersRenderer(props: t.FieldRendererProps) {
   const record = useMemo(() => {
     if (editsByEntry.size === 0) return baseRecord;
     const result: Record<string, t.ConfigValue> = {};
-    /** Resolves a single entry's overlay value or `undefined` when the entry should drop out. Iterates edits in insertion order so a whole-entry delete followed by recreating per-leaf writes shows the new entry, not the deleted one. The seed is the most recent whole-entry write (`undefined` becomes an empty object so subsequent leaves attach to it); without a whole-entry write the seed is the baseRecord entry. */
+    /** Resolves a single entry's overlay value or `undefined` when the entry should drop out. Iterates edits in insertion order so a whole-entry delete followed by recreating per-leaf writes shows the new entry, not the deleted one. The seed is the most recent whole-entry write (`undefined` becomes an empty object so subsequent leaves attach to it); without a whole-entry write the seed is the baseRecord entry. In base mode a whole-entry delete on a YAML-defined server only clears its DB overrides — the save DELETEs the override subtree and the YAML values resurface — so seed from the YAML entry instead of dropping the row, previewing the post-save state. */
     const resolveEntryValue = (
       entryKey: string,
       leafEdits: Array<{ segments: string[]; value: t.ConfigValue }>,
@@ -696,12 +698,14 @@ export function McpServersRenderer(props: t.FieldRendererProps) {
       let seed: t.ConfigValue | undefined = baseRecord[entryKey];
       let seedFromDelete = false;
       let seedIndex = -1;
+      const yamlEntry = isEditingScope ? undefined : yamlBaseValues?.[entryKey];
+      const deleteSeed = isPlainObject(yamlEntry) ? yamlEntry : undefined;
       for (let i = 0; i < leafEdits.length; i++) {
         const edit = leafEdits[i];
         if (edit.segments.length === 0) {
           if (edit.value === undefined) {
-            seed = {};
-            seedFromDelete = true;
+            seed = deleteSeed ?? {};
+            seedFromDelete = deleteSeed === undefined;
           } else {
             seed = edit.value;
             seedFromDelete = false;
@@ -739,7 +743,7 @@ export function McpServersRenderer(props: t.FieldRendererProps) {
       if (resolved !== undefined) result[entryKey] = resolved;
     }
     return result;
-  }, [baseRecord, editsByEntry]);
+  }, [baseRecord, editsByEntry, isEditingScope, yamlBaseValues]);
 
   const entries = useMemo(() => Object.entries(record), [record]);
 
@@ -753,6 +757,19 @@ export function McpServersRenderer(props: t.FieldRendererProps) {
   const yamlSourceKeys = useMemo(() => {
     return yamlBaseKeys ?? new Set<string>();
   }, [yamlBaseKeys]);
+
+  /** Entry keys that have persisted DB overrides in base mode. A YAML-defined server with overrides gets a trash affordance that clears the overrides and reverts it to its YAML definition. */
+  const overriddenEntryKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (!dbOverridePaths || isEditingScope) return keys;
+    const knownKeys = Object.keys(baseRecord);
+    for (const overridePath of dbOverridePaths) {
+      if (!overridePath.startsWith(entryPrefix)) continue;
+      const parsed = resolveEntryKey(overridePath.slice(entryPrefix.length), knownKeys);
+      if (parsed) keys.add(parsed.entryKey);
+    }
+    return keys;
+  }, [dbOverridePaths, isEditingScope, entryPrefix, baseRecord]);
 
   /** Refs keep the callbacks referentially stable so memo(McpEntryRow) can bail. */
   const editedValuesRef = useRef(editedValues);
@@ -929,6 +946,7 @@ export function McpServersRenderer(props: t.FieldRendererProps) {
           disabled={disabled}
           isEditingScope={!!isEditingScope}
           isYamlSource={yamlSourceKeys.has(key)}
+          hasDbOverride={overriddenEntryKeys.has(key)}
           onChange={onChange}
           onRemove={handleRemove}
           onRename={handleRename}
@@ -968,6 +986,7 @@ const McpEntryRow = memo(function McpEntryRowImpl({
   disabled,
   isEditingScope,
   isYamlSource,
+  hasDbOverride,
   onChange,
   onRemove,
   onRename,
@@ -980,11 +999,13 @@ const McpEntryRow = memo(function McpEntryRowImpl({
   disabled?: boolean;
   isEditingScope: boolean;
   isYamlSource: boolean;
+  hasDbOverride: boolean;
   onChange: (path: string, value: t.ConfigValue) => void;
   onRemove: (key: string) => void;
   onRename: (oldKey: string, newKey: string) => void;
   justAdded: boolean;
 }) {
+  const localize = useLocalize();
   const entryObj = isPlainObject(entryValue) ? entryValue : {};
   const rawType = typeof entryObj.type === 'string' ? entryObj.type : '';
   const inferred = rawType || inferTransportType(entryObj);
@@ -997,6 +1018,8 @@ const McpEntryRow = memo(function McpEntryRowImpl({
   const isDottedLegacy = entryKey.includes('.');
   const isReadOnly = !!disabled || isDottedLegacy;
   const isLockedIdentity = (!isEditingScope && isYamlSource) || isDottedLegacy;
+  /** A YAML-defined server cannot be deleted from the panel, but once it has DB overrides the trash becomes a "clear overrides" action so admins can revert it to its YAML definition. handleRemove resets the override subtree; the YAML values survive. */
+  const canClearOverrides = !isEditingScope && isYamlSource && hasDbOverride && !isDottedLegacy;
   const lockedKeys = isYamlSource && !isDottedLegacy ? YAML_LOCKED_FIELDS : undefined;
 
   const entryOnChange = useCallback(
@@ -1037,7 +1060,16 @@ const McpEntryRow = memo(function McpEntryRowImpl({
       fields={fields}
       value={displayValue}
       onValueChange={handleWholeEntryChange}
-      onRemove={isReadOnly || isLockedIdentity ? undefined : () => onRemove(entryKey)}
+      onRemove={
+        !isReadOnly && (!isLockedIdentity || canClearOverrides)
+          ? () => onRemove(entryKey)
+          : undefined
+      }
+      removeLabel={
+        canClearOverrides
+          ? localize('com_config_mcp_clear_overrides', { name: entryKey })
+          : undefined
+      }
       onRename={isReadOnly || isLockedIdentity ? undefined : (renamed) => onRename(entryKey, renamed)}
       disabled={isReadOnly}
       defaultExpanded={justAdded}
